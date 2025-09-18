@@ -15,32 +15,39 @@ if "messages" not in st.session_state:
 if "selected_query" not in st.session_state:
     st.session_state.selected_query = None
 
+
 # --- BOT LOGIC ---
 def google_search(query):
-    """Scrape Google search results (text + images)."""
+    """Scrape Google search results (snippets + images)."""
     headers = {"User-Agent": "Mozilla/5.0"}
     
     # Normal search for snippets
     search_url = f"https://www.google.com/search?q={query}"
     response = requests.get(search_url, headers=headers)
-    soup = BeautifulSoup(response.text, "html.parser")
-    snippets = [span.get_text() for span in soup.find_all("span")][:3]
+    soup = BeautifulSoup(response.text, "lxml")
+
+    # Extract result snippets (Google packs answers in <div class="BNeawe">)
+    snippets = []
+    for div in soup.find_all("div", class_="BNeawe"):
+        text = div.get_text(" ", strip=True)
+        if text and text not in snippets and len(text.split()) > 6:  # filter short junk
+            snippets.append(text)
+        if len(snippets) >= 7:  # collect ~6-7 sentences
+            break
     
     # Image search
     image_url = f"https://www.google.com/search?q={query}&tbm=isch"
     img_response = requests.get(image_url, headers=headers)
-    img_soup = BeautifulSoup(img_response.text, "html.parser")
+    img_soup = BeautifulSoup(img_response.text, "lxml")
 
     valid_images = []
     for img in img_soup.find_all("img"):
-        if "src" in img.attrs:
-            src = img["src"]
-            if src.startswith("http"):  # keep only absolute URLs
-                valid_images.append(src)
-
-    images = valid_images[:3]
+        if "src" in img.attrs and img["src"].startswith("http"):
+            valid_images.append(img["src"])
+        if len(valid_images) >= 2:  # only 1–2 images
+            break
     
-    return snippets, images
+    return snippets, valid_images
 
 
 def chatbot_response(user_input):
@@ -70,7 +77,7 @@ def chatbot_response(user_input):
     # Google
     snippets, images = google_search(user_input)
     if snippets:
-        responses.append("🔎 **Google says**:\n- " + "\n- ".join(snippets))
+        responses.append("🔎 **Google says**:\n\n" + " ".join(snippets))
 
     return responses, images
 
@@ -98,7 +105,6 @@ if user_input:
         st.session_state.messages.append({"role": "bot", "content": text, "images": []})
 
     if response_images:
-        # Store images as part of the last bot message
         st.session_state.messages.append({"role": "bot", "content": "🖼️ Images:", "images": response_images})
 
 # --- DISPLAY CHAT ---
@@ -113,4 +119,3 @@ for msg in st.session_state.messages:
                     st.image(Image.open(BytesIO(img_data)), width=200)
                 except Exception as e:
                     st.warning(f"⚠️ Could not load image: {e}")
-
